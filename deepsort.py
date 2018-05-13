@@ -1,3 +1,21 @@
+###################################################3
+# This script was originally developped by the Pytorch tutorial team
+# https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
+
+# This work extends the idea of a seq-to-seq network to sort an non-fix-sized array of positive integers
+
+# length. Each input vector is a binary number corresponding to an element in an 
+# array. These input vectors are then inputted to the encoder sequentially. The 
+# output at any position is an one-hot vector representing the position of the 
+# sorted number in the original array.
+
+# Attentional mechanism is not used in this work because it doesnot make much 
+# sense. Unlike translation, there are hardly any links between two numbers, 
+# whereas the is a strong similarty between two English-French word 
+# (i.e. Hello vs Bonjour) 
+
+# Created by Philip Huang on May 5th, 2018
+
 import torch
 import torch.nn as nn
 from torch import optim
@@ -15,14 +33,14 @@ import math
 MIN_LENGTH = 3
 MAX_LENGTH = 16 # determines output vector dimension
 MAX_NUMBER = 2**8 # determines input vector dimension
-INPUT_TENSOR_LENGTH = math.ceil(math.log2(MAX_NUMBER))
+INPUT_TENSOR_LENGTH = math.ceil(math.log2(MAX_NUMBER))# set the input tensor length based on the maximum number allowed
 OUTPUT_TENSOR_LENGTH = MAX_LENGTH + 1
 teacher_forcing_ratio = 0.5 # higher means more teacher forcing
 
-DATA_SIZE = 100000
+DATA_SIZE = 100000 # Size of random training data generated for each epoch
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-SOS_token = [0 for i in range(OUTPUT_TENSOR_LENGTH)]
+SOS_token = [0 for i in range(OUTPUT_TENSOR_LENGTH)] # Start of sequence token
 EOS_token = 0 # Position 0 means end of sequence
 
 class EncoderRNN(nn.Module):
@@ -134,6 +152,9 @@ def prepareData(number):
 
  
 def intToBin(x): 
+    """
+    x represent a positive integer
+    """
     bin_string = bin(x)[2:]
     binary = [0] * INPUT_TENSOR_LENGTH
     for i in range(1, 1+len(bin_string)):
@@ -149,6 +170,9 @@ def intToOneHot(x):
     return onehot
 
 def tensorsFromPair(pair): 
+    """
+    return a pair of tensor for a pair of input and output array
+    """
     input_list = [intToBin(x) for x in pair[0]]   
     output_list = pair[1]
     return (torch.FloatTensor(input_list, device = device), torch.LongTensor(output_list, device = device))
@@ -352,21 +376,26 @@ def evaluateRandomly(encoder, decoder, n=10):
 # single GRU layer. After about 40 minutes on a MacBook CPU we'll get some
 # reasonable results.
 #
-# .. Note::
+# .. Note::(How the original author recommendes)
 #    If you run this notebook you can train, interrupt the kernel,
 #    evaluate, and continue training later. Comment out the lines where the
 #    encoder and decoder are initialized and run ``trainIters`` again.
-#
+#   
+#   OR:(What I did)
+#   Run this on Pyzo. Open a python kernal and train. You can interrupt at any time, run the evaluate function and continue training again by just running the line 393-397
 
 hidden_size = 256
 encoder1 = EncoderRNN(INPUT_TENSOR_LENGTH, hidden_size).to(device)
 decoder1 = DecoderRNN(hidden_size, OUTPUT_TENSOR_LENGTH).to(device)
+
+
+#### This training process (with hand tuned learning rate) will take a day if the entire array is run.
+start_epoch = 0
+end_epoch = 27
 learning_rate_multiplier = [1, 1, 0.5, 0.5, 0.25, 0.25, 0.1, 0.1, 0.05, 0.05, 0.025,0.025, 0.01, 0.01, 0.01, 0.01, 0.005, 0.005, 0.0025, 0.0025, 0.001, 0.001, 0.0005, 0.0005, 0.00025, 0.00025, 0.0001, 0.0001]
-for epoch in range(26, 27):
+for epoch in range(start_epoch, end_epoch):
     trainIters(encoder1, decoder1, 75000, print_every=100, learning_rate = 0.01 *learning_rate_multiplier[epoch])
 
 ######################################################################
-#
-torch.save(encoder1, "model/e4")
-torch.save(decoder1, "model/d4")
+# 
 evaluateRandomly(encoder1, decoder1, 1000)

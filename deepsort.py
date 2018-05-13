@@ -13,10 +13,12 @@ import time
 import math
 
 MIN_LENGTH = 3
-MAX_LENGTH = 10 # array is not longer than 10 elements
-MAX_NUMBER = 10
+MAX_LENGTH = 16 # determines output vector dimension
+MAX_NUMBER = 2**8 # determines input vector dimension
 INPUT_TENSOR_LENGTH = math.ceil(math.log2(MAX_NUMBER))
 OUTPUT_TENSOR_LENGTH = MAX_LENGTH + 1
+teacher_forcing_ratio = 0.5 # higher means more teacher forcing
+
 DATA_SIZE = 100000
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -56,60 +58,8 @@ class DecoderRNN(nn.Module):
         return torch.zeros(1, 1, self.hidden_size, device=device)
         
         
-teacher_forcing_ratio = 0.5
 
 
-def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
-    encoder_hidden = encoder.initHidden() 
-    encoder_optimizer.zero_grad()
-    decoder_optimizer.zero_grad()
-
-    input_length = input_tensor.size(0)
-    target_length = target_tensor.size(0)
-
-    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
-
-    loss = 0
-
-    for ei in range(input_length):
-        encoder_output, encoder_hidden = encoder(
-            input_tensor[ei], encoder_hidden)
-        encoder_outputs[ei] = encoder_output[0, 0]
-
-    decoder_input = torch.FloatTensor([SOS_token], device=device)
-
-    decoder_hidden = encoder_hidden
-
-    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
-
-    if use_teacher_forcing:
-        # Teacher forcing: Feed the target as the next input
-        for di in range(target_length):
-            decoder_output, decoder_hidden = decoder(
-                decoder_input, decoder_hidden)
- 
-            loss += criterion(decoder_output, target_tensor[di:di+1])
-            decoder_input = intToOneHot(target_tensor[di].item())  
-            # Teacher forcing
-
-    else:
-        # Without teacher forcing: use its own predictions as the next input
-        for di in range(target_length):
-            decoder_output, decoder_hidden = decoder(
-                decoder_input, decoder_hidden)
-            topv, topi = decoder_output.topk(1)
-            decoder_input = topi.squeeze().detach()  # detach from history as input
-            loss += criterion(decoder_output, target_tensor[di:di+1])
-            if decoder_input.item() == EOS_token:
-                break
-            decoder_input = intToOneHot(decoder_input.item())
-
-    loss.backward()
-
-    encoder_optimizer.step()
-    decoder_optimizer.step()
-
-    return loss.item() / target_length
 ######################################################################
 # This is a helper function to print time elapsed and estimated time
 # remaining given the current time and progress %.
@@ -181,10 +131,9 @@ def prepareData(number):
     
     return data_pairs
 
-data_pairs = prepareData(DATA_SIZE) 
-print(random.choice(data_pairs))
+
  
-def intToBin(x):
+def intToBin(x): 
     bin_string = bin(x)[2:]
     binary = [0] * INPUT_TENSOR_LENGTH
     for i in range(1, 1+len(bin_string)):
@@ -199,11 +148,65 @@ def intToOneHot(x):
     onehot[x] = 1
     return onehot
 
-def tensorsFromPair(pair):
+def tensorsFromPair(pair): 
     input_list = [intToBin(x) for x in pair[0]]   
     output_list = pair[1]
     return (torch.FloatTensor(input_list, device = device), torch.LongTensor(output_list, device = device))
 
+
+def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
+    encoder_hidden = encoder.initHidden() 
+    encoder_optimizer.zero_grad()
+    decoder_optimizer.zero_grad()
+
+    input_length = input_tensor.size(0)
+    target_length = target_tensor.size(0)
+
+    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+
+    loss = 0
+
+    for ei in range(input_length):
+        encoder_output, encoder_hidden = encoder(
+            input_tensor[ei], encoder_hidden)
+        encoder_outputs[ei] = encoder_output[0, 0]
+
+    decoder_input = torch.FloatTensor([SOS_token], device=device)
+
+    decoder_hidden = encoder_hidden
+
+    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
+
+    if use_teacher_forcing:
+        # Teacher forcing: Feed the target as the next input
+        for di in range(target_length):
+            decoder_output, decoder_hidden = decoder(
+                decoder_input, decoder_hidden)
+ 
+            loss += criterion(decoder_output, target_tensor[di:di+1])
+            decoder_input = intToOneHot(target_tensor[di].item())  
+            # Teacher forcing
+
+    else:
+        # Without teacher forcing: use its own predictions as the next input
+        for di in range(target_length):
+            decoder_output, decoder_hidden = decoder(
+                decoder_input, decoder_hidden)
+            topv, topi = decoder_output.topk(1)
+            decoder_input = topi.squeeze().detach()  # detach from history as input
+            loss += criterion(decoder_output, target_tensor[di:di+1])
+            if decoder_input.item() == EOS_token:
+                break
+            decoder_input = intToOneHot(decoder_input.item())
+
+    loss.backward()
+
+    encoder_optimizer.step()
+    decoder_optimizer.step()
+
+    return loss.item() / target_length
+
+    
 def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
     start = time.time()
     plot_losses = []
@@ -212,6 +215,8 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
 
     encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
+    data_pairs = prepareData(DATA_SIZE) 
+    print(random.choice(data_pairs))
     training_pairs = [tensorsFromPair(random.choice(data_pairs))
                       for i in range(n_iters)]
     print("Finish Preparing all training data")
@@ -259,6 +264,7 @@ def showPlot(points):
     loc = ticker.MultipleLocator(base=0.2)
     ax.yaxis.set_major_locator(loc)
     plt.plot(points)
+    plt.show()
 
 
 ######################################################################
@@ -272,9 +278,9 @@ def showPlot(points):
 # attention outputs for display later.
 #
 
-def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
+def evaluate(encoder, decoder, pair, max_length=MAX_LENGTH):
     with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
+        input_tensor, target_tensor = tensorsFromPair(pair)
         input_length = input_tensor.size()[0]
         encoder_hidden = encoder.initHidden()
 
@@ -285,27 +291,24 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
                                                      encoder_hidden)
             encoder_outputs[ei] += encoder_output[0, 0]
 
-        decoder_input = torch.tensor([[SOS_token]], device=device)  # SOS
+        decoder_input = torch.FloatTensor([[SOS_token]], device=device)  # SOS
 
         decoder_hidden = encoder_hidden
 
-        decoded_words = []
-        decoder_attentions = torch.zeros(max_length, max_length)
+        decoded_sequence = [] 
 
-        for di in range(max_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            decoder_attentions[di] = decoder_attention.data
+        for di in range(len(pair[0])):
+            decoder_output, decoder_hidden= decoder(
+                decoder_input, decoder_hidden) 
             topv, topi = decoder_output.data.topk(1)
-            if topi.item() == EOS_token:
-                decoded_words.append('<EOS>')
-                break
+            #print(topi.item())
+            if topi.item() == EOS_token or topi.item() > len(pair[0]):
+                return decoded_sequence
             else:
-                decoded_words.append(output_lang.index2word[topi.item()])
-
-            decoder_input = topi.squeeze().detach()
-
-        return decoded_words, decoder_attentions[:di + 1]
+                decoded_sequence.append(pair[0][topi.item()-1])
+ 
+            decoder_input = intToOneHot(topi.item())
+        return decoded_sequence
 
 
 ######################################################################
@@ -314,15 +317,27 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 #
 
 def evaluateRandomly(encoder, decoder, n=10):
+    correct = 0
+    correct_per_length = {i:0 for i in range(MIN_LENGTH, MAX_LENGTH+1)}
+    count_per_length = {i:0 for i in range(MIN_LENGTH, MAX_LENGTH+1)}
+    data_pairs = prepareData(n) 
     for i in range(n):
-        pair = random.choice(pairs)
+        pair = data_pairs[i]
+        sorted_arr = sorted(pair[0])
         print('>', pair[0])
-        print('=', pair[1])
-        output_words, attentions = evaluate(encoder, decoder, pair[0])
-        output_sentence = ' '.join(output_words)
-        print('<', output_sentence)
+        print('=', sorted_arr)
+        output_array = evaluate(encoder, decoder, pair) 
+        print('<', output_array)
         print('')
-
+        if output_array == sorted(pair[0]):
+            correct += 1
+            correct_per_length[len(pair[0])] += 1
+        count_per_length[len(pair[0])] += 1
+        print("Total Success Rate %.2f%%"%(correct/(i+1) * 100))
+    for size, correct in correct_per_length.items():
+        total = count_per_length[size]
+        if total != 0:
+            print("Success Rate for N = %d is %.2f%%"%(size, correct/total * 100))
 
 ######################################################################
 # Training and Evaluating
@@ -346,10 +361,12 @@ def evaluateRandomly(encoder, decoder, n=10):
 hidden_size = 256
 encoder1 = EncoderRNN(INPUT_TENSOR_LENGTH, hidden_size).to(device)
 decoder1 = DecoderRNN(hidden_size, OUTPUT_TENSOR_LENGTH).to(device)
-
-trainIters(encoder1, decoder1, 75000, print_every=100)
+learning_rate_multiplier = [1, 1, 0.5, 0.5, 0.25, 0.25, 0.1, 0.1, 0.05, 0.05, 0.025,0.025, 0.01, 0.01, 0.01, 0.01, 0.005, 0.005, 0.0025, 0.0025, 0.001, 0.001, 0.0005, 0.0005, 0.00025, 0.00025, 0.0001, 0.0001]
+for epoch in range(26, 27):
+    trainIters(encoder1, decoder1, 75000, print_every=100, learning_rate = 0.01 *learning_rate_multiplier[epoch])
 
 ######################################################################
 #
-
-evaluateRandomly(encoder1, decoder1)
+torch.save(encoder1, "model/e4")
+torch.save(decoder1, "model/d4")
+evaluateRandomly(encoder1, decoder1, 1000)
